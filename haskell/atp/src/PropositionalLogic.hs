@@ -5,7 +5,7 @@ import Prelude hiding (negate,sum)
 import qualified Data.Set as S
 import Data.List (intercalate,minimumBy,maximumBy)
 import Data.Maybe
-import qualified Data.Map as M
+import qualified Data.HashMap.Strict as M
 import GHC.Unicode(isDigit)
 import Types
 import Failing

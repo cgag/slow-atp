@@ -1,13 +1,16 @@
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE OverloadedStrings #-}
 module FirstOrderLogic where
 
 import Prelude hiding (negate,sum,pred,zip,length)
 import qualified Data.Set as S
 import Data.List (delete)
 import Data.Maybe
-import qualified Data.Map as M
-import Data.Sequence as Seq -- (Seq, viewl, zip, (<|))
+import Data.Hashable (Hashable)
+import qualified Data.HashMap.Strict as M
 import Debug.Trace
+import qualified Data.Vector as V
+import qualified Data.Text as T
 
 import PropositionalLogic hiding (nnf)
 import Types
@@ -29,8 +32,8 @@ puremeson1 fm = deepen (\n -> mexpand1 rules mempty FF return (mempty,n,0) >> re
 mexpand1 :: S.Set PrologRule
         -> S.Set (Formula FOL)
         -> Formula FOL
-        -> ((M.Map V Term, Int, Int) -> Failing a)
-        -> (M.Map V Term, Int, Int)
+        -> ((M.HashMap V Term, Int, Int) -> Failing a)
+        -> (M.HashMap V Term, Int, Int)
         -> Failing a
 mexpand1 rules ancestors g cont (env,n,k)
   | n < 0 = failure "Too deep"
@@ -49,24 +52,24 @@ meson2 fm =
   let fm1 = askolemize (Not (generalize fm)) in
   S.map (puremeson2 . list_conj) (simpdnf fm1)
 
-equal :: M.Map V Term -> Formula FOL -> Formula FOL -> Bool
+equal :: M.HashMap V Term -> Formula FOL -> Formula FOL -> Bool
 equal env fm1 fm2 =
     case unifyLiterals env (fm1,fm2) of
       Success env' | env == env' -> True
       _ -> False
 
 expand2 :: (S.Set (Formula FOL) ->
-            ((M.Map V Term, Int, Int) -> Failing (M.Map V Term, Int, Int)) ->
-            (M.Map V Term, Int, Int) -> Failing (M.Map V Term, Int, Int))
+            ((M.HashMap V Term, Int, Int) -> Failing (M.HashMap V Term, Int, Int)) ->
+            (M.HashMap V Term, Int, Int) -> Failing (M.HashMap V Term, Int, Int))
         -> S.Set (Formula FOL)
         -> Int
         -> S.Set (Formula FOL)
         -> Int
         -> Int
-        -> ((M.Map V Term, Int, Int) -> Failing (M.Map V Term, Int, Int))
-        -> M.Map V Term
+        -> ((M.HashMap V Term, Int, Int) -> Failing (M.HashMap V Term, Int, Int))
+        -> M.HashMap V Term
         -> Int
-        -> Failing (M.Map V Term, Int, Int)
+        -> Failing (M.HashMap V Term, Int, Int)
 expand2 expfn goals1 n1 goals2 n2 n3 cont env k =
     expfn goals1 (\(e1,r1,k1) ->
                       expfn goals2 (\(e2,r2,k2) ->
@@ -85,9 +88,9 @@ puremeson2 fm = deepen (\n -> mexpand2 rules mempty FF return (mempty,n,0) >> re
 mexpand2 :: S.Set PrologRule
          -> S.Set (Formula FOL)
          -> Formula FOL
-         -> ((M.Map V Term, Int, Int) -> Failing (M.Map V Term, Int, Int))
-         -> (M.Map V Term, Int, Int)
-         -> Failing (M.Map V Term, Int, Int)
+         -> ((M.HashMap V Term, Int, Int) -> Failing (M.HashMap V Term, Int, Int))
+         -> (M.HashMap V Term, Int, Int)
+         -> Failing (M.HashMap V Term, Int, Int)
 mexpand2 rules ancestors g cont (env,n,k)
   | n < 0 = failure "Too deep"
   | otherwise =
@@ -98,7 +101,7 @@ mexpand2 rules ancestors g cont (env,n,k)
      doAncestor a = do
        ul <- unifyLiterals env (g,negate a)
        cont (ul,n,k)
-     doRule :: PrologRule -> Failing (M.Map V Term, Int, Int)
+     doRule :: PrologRule -> Failing (M.HashMap V Term, Int, Int)
      doRule rule = do
        let (Prolog asm c, k') = renamerule k rule
        ul <- unifyLiterals env (g,c)
@@ -107,9 +110,9 @@ mexpand2 rules ancestors g cont (env,n,k)
 mexpands :: S.Set PrologRule
          -> S.Set (Formula FOL)
          -> S.Set (Formula FOL)
-         -> ((M.Map V Term, Int, Int) -> Failing (M.Map V Term, Int, Int))
-         -> (M.Map V Term, Int, Int)
-         -> Failing (M.Map V Term, Int, Int)
+         -> ((M.HashMap V Term, Int, Int) -> Failing (M.HashMap V Term, Int, Int))
+         -> (M.HashMap V Term, Int, Int)
+         -> Failing (M.HashMap V Term, Int, Int)
 mexpands rules ancestors gs cont (env,n,k) =
     if fromEnum n < 0
     then Failure "Too deep"
@@ -144,8 +147,8 @@ renamerule k (Prolog asm c) = (Prolog (S.map inst asm) (inst c),k+n)
  where
   fvs = fv (list_conj (S.insert c asm))
   n = S.size fvs
-  vvs :: Seq V
-  vvs = fmap (\i -> V ("_" ++ show i)) [k .. (k+n-1)]
+  vvs :: V.Vector V
+  vvs = fmap (\i -> V ("_" `T.append` (T.pack . show $ i))) [k .. (k+n-1)]
   inst = subst (fpf (setToSeq fvs) (fmap Var vvs))
 
 deepen :: (Num a, Show a) => (a -> Failing r) -> a -> r
@@ -156,30 +159,31 @@ meson :: Formula FOL -> S.Set Int
 meson = meson2
 
 unifyLiterals
-  :: M.Map V Term
-     -> (Formula FOL, Formula FOL) -> Failing (M.Map V Term)
+  :: M.HashMap V Term
+     -> (Formula FOL, Formula FOL) -> Failing (M.HashMap V Term)
 unifyLiterals env (Atom (R (P p1) a1),Atom (R (P p2) a2)) =
     unify env [(Fn (F p1) a1,Fn (F p2) a2)] -- a cheat here
 unifyLiterals env (Not p,Not q) = unifyLiterals env (p,q)
 unifyLiterals env (FF,FF) = return env
 unifyLiterals _ _ = failure "Can't unify literals"
 
-unify :: M.Map V Term -> Seq (Term, Term) -> Failing (M.Map V Term)
-unify env pairs =
-    case viewl pairs of
-      EmptyL -> return env
-      (Fn f fargs,Fn g gargs) :< oth ->
-          if f == g && length fargs == length gargs
-          then unify env (zip fargs gargs >< oth)
+unify :: M.HashMap V Term -> V.Vector (Term, Term) -> Failing (M.HashMap V Term)
+unify env pairs
+  | V.null pairs = return env
+  | otherwise =
+    case (V.head pairs, V.tail pairs) of
+      ((Fn f fargs,Fn g gargs), oth) ->
+          if f == g && V.length fargs == V.length gargs
+          then unify env ((V.zip fargs gargs) V.++ oth)
           else failure "impossible unification"
-      (Var x,t) :< oth ->
-          if M.member x env then unify env ((env M.! x,t) <| oth)
+      ((Var x,t), oth) ->
+          if M.member x env then unify env (V.cons (env M.! x,t) oth)
           else do
             z <- istriv env x t
             unify (if z then env else M.insert x t env) oth
-      (t, Var x) :< oth -> unify env ((Var x,t) <| oth)
+      ((t, Var x), oth) -> unify env (V.cons (Var x,t) oth)
 
-istriv :: M.Map V Term -> V -> Term -> Failing Bool
+istriv :: M.HashMap V Term -> V -> Term -> Failing Bool
 istriv env x (Var y)
  | y == x = return True
  | M.member y env = istriv env x (env M.! y)
@@ -188,8 +192,8 @@ istriv env x (Fn _ args) = do
    a <- mapM (istriv env x) args
    if or a then failure "cyclic" else return False
 
-fpf :: Ord k => Seq k -> Seq a -> M.Map k a
-fpf xs ys = foldr (\(x, y) mp -> M.insert x y mp) mempty (zip xs ys)
+fpf :: (Ord k, Hashable k) => V.Vector k -> V.Vector a -> M.HashMap k a
+fpf xs ys = foldr (\(x, y) mp -> M.insert x y mp) mempty (V.zip xs ys)
 
 specialize :: Formula t -> Formula t
 specialize (Forall _ p) = specialize p
@@ -200,7 +204,7 @@ askolemize fm = fst (skolem (nnf (simplify fm)) (S.map fst (functions fm)))
 
 funcs :: Term -> S.Set (F, Int)
 funcs (Var _) = mempty
-funcs (Fn f args) = S.insert (f,length args) (setUnions (fmap funcs args))
+funcs (Fn f args) = S.insert (f,V.length args) (setUnions (fmap funcs args))
 
 functions :: Formula FOL -> S.Set (F, Int)
 functions fm = S.fold S.union mempty (atom_union (\(R _ a) -> setUnions (fmap funcs a)) fm)
@@ -209,7 +213,7 @@ skolem :: Formula FOL -> S.Set F -> (Formula FOL, S.Set F)
 skolem fm@(Exists y@(V s) p) fns = skolem (subst (M.singleton y fx) p) (S.insert f fns)
  where
   xs = fv fm
-  f = variantF (F (if S.null xs then "c_"++s else "f_"++s)) fns
+  f = variantF (F (if S.null xs then "c_" `T.append` s else "f_" `T.append` s)) fns
   fx = Fn f (fmap Var (setToSeq xs))
 skolem (Forall x p) fns = (Forall x p',fns')
  where
@@ -296,7 +300,7 @@ simplify1 fm = psimplify1 fm
 
 -- Section 3.4
 
-subst :: M.Map V Term -> Formula FOL -> Formula FOL
+subst :: M.HashMap V Term -> Formula FOL -> Formula FOL
 subst subfn FF = FF
 subst subfn TT = TT
 subst subfn (Atom (R p args)) = Atom (R p (fmap (tsubst subfn) args))
@@ -315,15 +319,15 @@ substq subfn quant x p = quant x' (subst (M.insert x (Var x') subfn) p)
 
 variantVar :: V -> S.Set V -> V
 variantVar x@(V s) vars
- | S.member x vars = variantVar (V (s ++ "'")) vars
+ | S.member x vars = variantVar (V (s `T.append` "'")) vars
  | otherwise = x
 
 variantF :: F -> S.Set F -> F
 variantF x@(F s) vars
- | S.member x vars = variantF (F (s ++ "'")) vars
+ | S.member x vars = variantF (F (s `T.append` "'")) vars
  | otherwise = x
 
-tsubst :: M.Map V Term -> Term -> Term
+tsubst :: M.HashMap V Term -> Term -> Term
 tsubst sfn tm@(Var x) = maybe tm id (M.lookup x sfn)
 tsubst sfn (Fn f args) = Fn f (fmap (tsubst sfn) args)
 

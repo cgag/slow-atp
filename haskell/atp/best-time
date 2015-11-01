@@ -1,0 +1,7 @@
+Computation time: 0.647646s
+Vector -> 0.52456
+Strict map -> 0.544227
+Stict hashmap -> 0.457255
+More strictdness -> 0.435053s
+- note: somehow adding strictness to the prolog rule seems to add ~50ms
+Text instead of string -> 0.423034s

@@ -6,7 +6,7 @@ import Prelude hiding (negate,sum,pred)
 import qualified Data.Set as S
 import Data.List (intercalate,minimumBy,maximumBy,find,partition,delete)
 import Data.Maybe
-import qualified Data.Map as M
+import qualified Data.HashMap.Strict as M
 import Data.Time.Clock
 import Debug.Trace
 
